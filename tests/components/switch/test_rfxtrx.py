@@ -2,6 +2,8 @@
 import unittest
 
 from homeassistant.components import rfxtrx as rfxtrx_core
+from homeassistant.components.rfxtrx import (
+    ATTR_FIREEVENT, ATTR_NAME, ATTR_PACKETID, ATTR_STATE, EVENT_BUTTON_PRESSED)
 from homeassistant.components.switch import rfxtrx
 from unittest.mock import patch
 
@@ -36,7 +38,7 @@ class TestSwitchRfxtrx(unittest.TestCase):
         rfxtrx.setup_platform(self.hass, config, add_dev_callback)
         self.assertEqual(0, len(devices))
 
-    def test_one_sensor(self):
+    def test_one_switch(self):
         """Test with 1 switch."""
         config = {'devices':
                   {'123efab1': {
@@ -76,7 +78,7 @@ class TestSwitchRfxtrx(unittest.TestCase):
             entity.turn_off()
         self.assertFalse(entity.is_on)
 
-    def test_several_switchs(self):
+    def test_several_switches(self):
         """Test with 3 switches."""
         config = {'signal_repetitions': 3,
                   'devices':
@@ -236,3 +238,59 @@ class TestSwitchRfxtrx(unittest.TestCase):
             rfxtrx_core.RECEIVED_EVT_SUBSCRIBERS[0](event)
         self.assertEqual(0, len(rfxtrx_core.RFX_DEVICES))
         self.assertEqual(0, len(devices))
+
+    def test_fire_event(self):
+        """Test fire event."""
+        devices = []
+        calls = []
+        config = {'automatic_add': True, 'devices':
+                  {'123efab1': {
+                      'name': 'Test',
+                      'packetid': '0b1100cd0213c7f210010f51',
+                      ATTR_FIREEVENT: True}}}
+        import RFXtrx as rfxtrxmod
+        rfxtrx_core.RFXOBJECT =\
+            rfxtrxmod.Core("", transport_protocol=rfxtrxmod.DummyTransport)
+
+        devices = []
+
+        def add_dev_callback(devs):
+            """Add a callback to add devices."""
+            for dev in devs:
+                devices.append(dev)
+
+        def record_event(event):
+            """Add recorded event to set."""
+            calls.append(event)
+
+        from homeassistant.const import MATCH_ALL
+
+        self.hass.bus.listen(MATCH_ALL, record_event)
+
+        rfxtrx.setup_platform(self.hass, config, add_dev_callback)
+
+        self.assertEqual(1, len(devices))
+        entity = devices[0]
+        self.assertEqual('Test', entity.name)
+        self.assertEqual('off', entity.state)
+        self.assertTrue(entity.should_fire_event)
+
+        event = rfxtrx_core.get_rfx_object('0b1100cd0213c7f210010f51')
+        event.data = bytearray([0x0b, 0x11, 0x00, 0x10, 0x01, 0x18,
+                                0xcd, 0xea, 0x01, 0x01, 0x0f, 0x70])
+        with patch('homeassistant.components.switch.' +
+                   'rfxtrx.RfxtrxSwitch.update_ha_state',
+                   return_value=None):
+            rfxtrx_core.RECEIVED_EVT_SUBSCRIBERS[0](event)
+        entity = devices[1]
+        entity._should_fire_event = True
+        with patch('homeassistant.components.switch.' +
+                   'rfxtrx.RfxtrxSwitch.update_ha_state',
+                   return_value=None):
+            rfxtrx_core.RECEIVED_EVT_SUBSCRIBERS[0](event)
+
+        self.assertEqual(event.values['Command'], "On")
+        self.assertTrue(entity.should_fire_event)
+        self.assertEqual(2, len(rfxtrx_core.RFX_DEVICES))
+        self.assertEqual(2, len(devices))
+        self.assertEqual(1, len(calls))
